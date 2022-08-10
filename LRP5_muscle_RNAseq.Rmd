@@ -1,0 +1,857 @@
+---
+title: "Muscle_RNAseq"
+knit: (function(input_file, encoding) {
+    out_dir <- 'docs';
+    rmarkdown::render(input_file,
+      encoding=encoding,
+      output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+author: "Sam"
+date: "11/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Muscle RNAseq results
+
+#### Methods
+
+Differential gene expression analysis was conducted using a multilevel or repeated measures design. The repeated design refers to the fact that multiple measures were performed in the same individuals, so we have a paired comparison experiment for each genotype group allowing us to compare the effect of treatment, in this case euglycaemic clamp, between the same individuals. However, additionally we would like to compare the effect of treatment between genotype groups. This was perform using DEseq2 a model matrix was constructed using the following formula: ~Genotype + Genotype:individual number + Genotype:Stimulation. Comparsions between groups were performed at basal level using controlling for age + sex + BMI. Functional enrichment of genes was performed using gprofiler. Genes were ranked based on the absolute LogFC and submitted as an ordered query giving more weight to those genes with higher absolute logFC. LogFC changes we shrunk using the apeglm package.
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+setwd("/Users/sg/Library/Mobile Documents/com~apple~CloudDocs/Secondment/LRP5_data/LRP5_markdown/")
+library(plotrix)
+library(gplots)
+library(RColorBrewer)
+library(biomaRt)
+library(goseq)
+library(DESeq2)
+library(reshape2)
+library(ggplot2)
+library(data.table)
+library(fgsea)
+library(tidyverse)
+library(fields)
+library(RColorBrewer)
+library(gprofiler2)
+library(DT)
+
+RNA = fread("results_paired_exp.txt")
+
+```
+
+## Number of significantly differentially expressed genes
+<br>
+
+```{r echo=FALSE, warning=F}
+all_sig = RNA[RNA$padj_mut_InsVsBasal < 0.01 & abs(RNA$logFC_wt_InsVsBasal) > 0.1 | RNA$padj_wt_InsVsBasal < 0.01 & abs(RNA$logFC_wt_InsVsBasal) > 0.1,]
+sigWT = RNA[RNA$padj_wt_InsVsBasal <= 0.01 ,]
+sigMUT = RNA[RNA$padj_mut_InsVsBasal <= 0.01,]
+sigbasal = RNA[RNA$padj_basal_mut_vs_wt <= 0.01 ,]
+sigins =  RNA[RNA$padj_Ins_mut_vs_wt <= 0.01 ,]
+sigWTup = sigWT %>% filter(logFC_wt_InsVsBasal > 0)
+sigMUTup = sigMUT %>% filter(logFC_mut_InsVsBasal > 0)
+sigWTdwn = sigWT %>% filter(logFC_wt_InsVsBasal < 0)
+sigMUTdwn = sigMUT %>% filter(logFC_mut_InsVsBasal < 0)
+cat(nrow(sigWT)," siginificant genes in WT between Insulin & Basal")
+cat(nrow(sigMUT)," siginificant genes in MUT between Insulin & Basal")
+cat(nrow(sigbasal)," siginificant genes between Basal WT & Basal WT")
+cat(nrow(sigins)," siginificant genes between Insulin MUT & Insulin MUT")
+
+datatable(RNA[RNA$padj_wt_InsVsBasal <= 0.01 | RNA$padj_mut_InsVsBasal <= 0.01, c('Symbol', 'padj_wt_InsVsBasal', "logFC_wt_InsVsBasal", "padj_mut_InsVsBasal","logFC_mut_InsVsBasal")], caption = "All significant genes")
+
+```
+<br>
+<br>
+<br>
+
+## Overlap of significant genes with old model non-repeated measurements design
+
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE}
+###### Overlap with old model ##########
+old = fread("old_sig_genes.txt", header = T)
+plot(old$logFC_mut_InsVsBasal[old$Symbol %in% all_sig$Symbol], 
+    all_sig$logFC_wt_InsVsBasal[all_sig$Symbol %in% old$Symbol])
+
+
+
+cat("Correlation of significant genes between old and new model",cor(old$logFC_mut_InsVsBasal[old$Symbol %in% all_sig$Symbol], all_sig$logFC_wt_InsVsBasal[all_sig$Symbol %in% old$Symbol]))
+```
+##### WNT genes
+
+Genes related to WNT signaling are differentially expressed, most notably, BCL9, BCL9L, WNT11, WNT9A, WNT4.
+
+BCL9, together with its paralogue gene BCL9L (BCL9 like or BCL9.2), have been extensively studied for their role as transcriptional beta-catenin cofactors, fundamental for the transcription of Wnt target genes
+
+#### Gene expression of muscle tissue in healthy controls
+
+Bulk RNAseq was performed on muscle biopsies of 11 healthy matched controls, before and after, glucose and insulin infusion via hyperinsulinemic euglycemic clamps. In total we detected the expression of 20,849 in skeletal muscle. Principally, we see a clear distinction in gene expression patterns between basal and insulin states across all individuals (Figure 1). We observe 1,648 (837 upregulated and 811 down regulated) differentially expressed genes (p<0.01) between basal and insulin stimulated tissue biopsies in healthy controls (Figure 1b). 
+
+Notably highly significant up-regulated genes including CXCL1, IL6, IL1B, SLAMF1, and SOCS3 are cytokines with established functions in negatively regulating insulin signaling [25-28]. Highly downregulated include PDK4, KLF15, C1orf51, PIK3IP1, and TXNIP, the only gene shown to be differentially expressed in a similar study [29]. Insulin receptor substrate 1 (IRS1) and 2 were also found to be significantly downregulated.
+
+#### Gene expression of muscle tissue in LRP5 mutants
+
+Principally, we see a marred level of transcription in the individuals with LRP5 mutations. Individuals with LRP5 mutations demonstrated 916 differentially expressed genes (468 upregulated and 448 down regulated) (p<0.01) between basal and insulin stimulated tissue biopsies (Figure 1c). Seventy one percent of differentially expressed genes overlap with the differentially expressed genes in controls. Top upregulated genes in general had lower differential expression in comparison to controls, contrastingly, top downregulated genes were more differentially expressed (supplementary figure). 
+
+
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE, warning=F}
+thres <- 0
+par(mfcol=c(2,1), pty="s")
+
+library(EnhancedVolcano)
+RNA = RNA[!RNA$Symbol %in% c("HAS1", "SAA2-SAA4", "IL8"),]
+
+keyvals <- ifelse(
+  RNA$logFC_wt_InsVsBasal < 0 & RNA$padj_wt_InsVsBasal < 0.01, "#00BFC4",
+  ifelse(RNA$logFC_wt_InsVsBasal > 0 & RNA$padj_wt_InsVsBasal < 0.01 , "#F8766D",
+         'grey'))
+keyvals[is.na(keyvals)] <- 'grey'
+names(keyvals)[keyvals == "#F8766D"] <- 'increased'
+names(keyvals)[keyvals == 'grey'] <- 'ns'
+names(keyvals)[keyvals == "#00BFC4"] <- 'decreased'
+
+p1 = EnhancedVolcano(RNA,
+                title = 'Basal vs Insulin stimulation in controls',
+                lab = RNA$Symbol,
+                selectLab = RNA$Symbol[RNA$padj_wt_InsVsBasal < 0.01 & abs(RNA$logFC_wt_InsVsBasal) > 1],
+                x = 'logFC_wt_InsVsBasal',
+                y = 'padj_wt_InsVsBasal',
+                pCutoff = 0.01,
+                FCcutoff = NA,
+                pointSize = 1.5,
+                legendPosition = 'right',
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                colAlpha=1, caption = NULL,
+                subtitle = NULL, colCustom = keyvals, gridlines.minor = T, gridlines.major = F,
+                xlim = c(-5,6))
+p1 + annotate("text", x = 6, y = 50, label = sum(names(keyvals) == "increased"), col = "#F8766D", cex = 6) +
+  annotate("text", x = -4, y = 50, label = sum(names(keyvals) == "decreased"), col = "#00BFC4",  cex = 6)
+
+keyvals <- ifelse(
+  RNA$logFC_mut_InsVsBasal < 0 & RNA$padj_mut_InsVsBasal < 0.01, "#00BFC4",
+  ifelse(RNA$logFC_mut_InsVsBasal > 0 & RNA$padj_mut_InsVsBasal < 0.01 , "#F8766D",
+         'grey'))
+keyvals[is.na(keyvals)] <- 'grey'
+names(keyvals)[keyvals == "#F8766D"] <- 'increased'
+names(keyvals)[keyvals == 'grey'] <- 'ns'
+names(keyvals)[keyvals == "#00BFC4"] <- 'decreased'
+
+p2 = EnhancedVolcano(RNA,
+                     title = 'Basal vs Insulin stimulation in LRP5',
+                     lab = RNA$Symbol,
+                     selectLab = RNA$Symbol[RNA$padj_mut_InsVsBasal < 0.01 & abs(RNA$logFC_mut_InsVsBasal) > 1],
+                     x = 'logFC_mut_InsVsBasal',
+                     y = 'padj_mut_InsVsBasal',
+                     pCutoff = 0.01,
+                     FCcutoff = NA,
+                     pointSize = 1.5,
+                     legendPosition = 'right',
+                     legendLabSize = 12,
+                     legendIconSize = 4.0,
+                     colAlpha=1, caption = NULL,
+                     subtitle = NULL, colCustom = keyvals, gridlines.minor = T, gridlines.major = F,
+                     xlim = c(-5,6))
+p2 + annotate("text", x = 6, y = 50, label = sum(names(keyvals) == "increased"), col = "#F8766D", cex = 6) +
+  annotate("text", x = -4, y = 50, label = sum(names(keyvals) == "decreased"), col = "#00BFC4",  cex = 6)
+
+```
+<br>
+<br>
+<br>
+
+### Top 20 up-regulated genes across both mutant and control
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE}
+##### Top 20 expressed genes in mutant forest plots #######
+tmp1 <- all_sig %>%
+  select(Symbol, logFC = logFC_wt_InsVsBasal, SE = SE_wt_InsVsBasal, P = padj_wt_InsVsBasal) %>%
+  mutate(Genotype = "Control") %>% arrange(desc(logFC))
+tmp2 = all_sig %>%
+  select(Symbol, logFC = logFC_mut_InsVsBasal, SE = SE_mut_InsVsBasal, P = padj_mut_InsVsBasal) %>%
+  mutate( Genotype = "LRP5") %>% arrange(desc(logFC))
+tmp3 = bind_rows(tmp1[1:20,],tmp2[1:20,]) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE))
+lv = tmp3 %>% arrange(desc(logFC)) %>% select(Symbol) %>% distinct()
+tmp3 = bind_rows(tmp1,tmp2) %>% filter(Symbol %in% lv$Symbol[1:20]) %>%
+  mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE))
+tmp3$Symbol<-factor(tmp3$Symbol, levels=rev(lv$Symbol[1:20]))
+
+b = tmp3 %>% arrange(Symbol) %>% 
+  ggplot(aes(x =Symbol,y = logFC, size = -log(P))) +
+  geom_point(aes(col=Genotype), position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  scale_size(name   = "P-value",
+             breaks = -log(c(1,0.1,0.01,1e-10)),
+             labels = c(1,0.1,0.01,1e-10),
+             range = c(2,8)) +
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Top 20 genes by positive LogFC across Mutant & Control")+
+  theme_light()
+b
+```
+<br>
+<br>
+<br>
+
+### Top 20 down-regulated genes across both mutant and control
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE}
+### Top 20 down ######
+tmp1 <- all_sig %>%
+  select(Symbol, logFC = logFC_wt_InsVsBasal, SE = SE_wt_InsVsBasal, P = padj_wt_InsVsBasal) %>%
+  mutate(Genotype = "Control") %>% arrange(logFC)
+tmp2 = all_sig %>%
+  select(Symbol, logFC = logFC_mut_InsVsBasal, SE = SE_mut_InsVsBasal, P = padj_mut_InsVsBasal) %>%
+  mutate( Genotype = "LRP5") %>% arrange(logFC)
+tmp3 = bind_rows(tmp1[1:20,],tmp2[1:20,]) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE))
+lv = tmp3 %>% arrange(logFC) %>% select(Symbol) %>% distinct()
+tmp3 = bind_rows(tmp1,tmp2) %>% filter(Symbol %in% lv$Symbol[1:20]) %>%
+  mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE))
+tmp3$Symbol<-factor(tmp3$Symbol, levels=lv$Symbol[1:20])
+
+b = tmp3 %>% arrange(Symbol) %>% 
+  ggplot(aes(x =Symbol,y = logFC, size = -log(P))) +
+  geom_point(aes(col=Genotype), position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  scale_size(name   = "P-value",
+             breaks = -log(c(1,0.1,0.01,1e-10)),
+             labels = c(1,0.1,0.01,1e-10),
+             range = c(2,8)) +
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Top 20 genes by negative LogFC across Mutant & Control")+
+  theme_light()
+b
+```
+<br>
+<br>
+<br>
+
+#### Unique differentially expressed genes in LRP5
+
+```{r echo=FALSE, warning=F}
+cat(sum(sigMUT$Symbol %in% sigWT$Symbol)/nrow(sigMUT), "significantly differential genes overlap between mutant and wild typeHowever, many of these genes have a low logFC. Only 23 have an absolute change greater than 1, additionally gene enrichment reutrn no significantly enriched GO or REACTOME pathways, one KEGG pathway was returned relating to Gap junction")
+
+sigUNIQ = sigMUT %>% filter(!Symbol %in% sigWT$Symbol)
+
+datatable(sigUNIQ[,c('Symbol', 'padj_wt_InsVsBasal', "logFC_wt_InsVsBasal", "padj_mut_InsVsBasal","logFC_mut_InsVsBasal")], caption = "Genes uniquely associated in mutant")
+```
+
+<br>
+<br>
+<br>
+
+### Gene enrichment
+
+Gene enrichment was performed using gprofile. Gene were organised absolute logFC and submitted for enrichment
+via an ordered query allowing for genes with higher differential expression to have higher weight of enrichment.
+
+KEGG and reactome contain more broad pathways and GO more detailed pathway. i.e One KEGG/REACTOME pathways may be multiple GO pathways.
+
+```{r echo=F}
+
+datatable(fread("KEGG_comparsion.txt")[,-c("p_values", "source_order","parents", "effective_domain_size")], caption = "KEGG pathways")
+
+datatable(fread("REAC_comparsion.txt")[,-c("p_values", "source_order","parents", "effective_domain_size")], caption = "REACTOME pathways")
+
+datatable(fread("GOBP_comparsion.txt")[,-c("p_values", "source_order","parents", "effective_domain_size")], caption = "GO biological pathways")
+
+```
+<br>
+<br>
+<br>
+
+GO analysis of the differentially expressed genes (Supplementary Data ?) demonstrate similarly enrichment in pathways relating to intracellular signaling, cell proliferation, vasculature, cellular, and structural development, although to a lesser degree (figure 1). However, in contrast to controls no significant enrichment in pathways regulating to insulin signaling are observed (figure 1). We identified genes within the mitogen-activated protein kinases (MAPKs), originally called extracellular signal-regulated kinases (ERKs) signaling pathway to be significantly differentially expressed between cases and controls (figure 1).
+
+Further, MAPK is known to regulate the activities of several transcription factors, namely FOS and MYC both of which are greatly differentially expressed in controls in comparison to wild type.
+
+
+
+#### Top KEGG pathways
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE}
+kegg = fread("KEGG_comparsion.txt")[1:10, c('term_name','pval_mut','pval_wt')] %>%
+  pivot_longer(cols = c('pval_mut','pval_wt'), values_to = "p_value", names_prefix = "pval_", names_to = "Genotype")
+
+kegg2 =  fread("KEGG_comparsion.txt") %>% arrange(pval_mut) 
+
+kegg2 = kegg2[1:10] %>% select('term_name','pval_mut','pval_wt') %>%
+  pivot_longer(cols = c('pval_mut','pval_wt'), values_to = "p_value", names_prefix = "pval_", names_to = "Genotype")
+
+#tiff("./RNAplots/", units="in", width=10, height=8, res=300)
+ggplot(data=kegg,
+       aes(x =term_name,y = -log(p_value)))+
+       geom_point(aes(col=Genotype),size = 6, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+        geom_hline(yintercept =-log(0.01), linetype=2)+
+        #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+        #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+        coord_flip() + 
+        xlab('')+ ylab("-log(P-value)")+
+        ggtitle("Top 10 KEGG pathways controls")+
+        theme_light()
+
+ggplot(data=kegg2,
+       aes(x =term_name,y = -log(p_value)))+
+       geom_point(aes(col=Genotype),size = 6, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+        geom_hline(yintercept =-log(0.01), linetype=2)+
+        #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+        #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+        coord_flip() + 
+        xlab('')+ ylab("-log(P-value)")+
+        ggtitle("Top 10 KEGG pathways LRP5")+
+        theme_light()
+
+```
+<br>
+<br>
+<br>
+
+#### Top REACTOME pathways
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE}
+reac = fread("REAC_comparsion.txt")[1:10, c('term_name','pval_mut','pval_wt')] %>%
+  pivot_longer(cols = c('pval_mut','pval_wt'), values_to = "p_value", names_prefix = "pval_", names_to = "Genotype")
+
+reac2 =  fread("REAC_comparsion.txt") %>% arrange(pval_mut) 
+
+reac2 = reac2[1:10,] %>% select('term_name','pval_mut','pval_wt') %>%
+  pivot_longer(cols = c('pval_mut','pval_wt'), values_to = "p_value", names_prefix = "pval_", names_to = "Genotype")
+
+#tiff("./RNAplots/", units="in", width=10, height=8, res=300)
+ggplot(data=reac,
+       aes(x =term_name,y = -log(p_value)))+
+       geom_point(aes(col=Genotype),size = 6, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+        geom_hline(yintercept =-log(0.01), linetype=2)+
+        #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+        #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+        coord_flip() + 
+        xlab('')+ ylab("-log(P-value)")+
+        ggtitle("Top 10 REACTOME pathways controls")+
+        theme_light()
+
+```
+```{r echo=F, fig.width=14, fig.height=7, fig.fullwidth=TRUE}
+ggplot(data=reac2,
+       aes(x =term_name,y = -log(p_value)))+
+       geom_point(aes(col=Genotype),size = 6, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+        geom_hline(yintercept =-log(0.01), linetype=2)+
+        #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+        #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+        coord_flip() + 
+        xlab('')+ ylab("-log(P-value)")+
+        ggtitle("Top 10 REACTOME pathways LRP5")+
+        theme_light()
+```
+
+Overall, we see concordance between the top enriched KEGG and REACTOME pathways, both relating to interleukine and cytokine signaling, this is likely a reflection of negative feedback mechanisms switching insulin off. One interesting pathway is the resistance to EGFR tyrosine kinase inhibitors pathway. This is one of the few pathways more enriched in the mutant and effects three downstream pathways:
+
+(1) rat sarcoma (RAS)/rapidly accelerated fibrosarcoma (RAF)/mitogen-activated protein kinase (MAPK) pathway
+(2) phosphatidylinositol-3-kinase (PI3K)/protein kinase B (AKT) pathway and 
+(3) janus kinase (JAK)/signal transducers and activators of transcription (STAT) pathway, which stimulates mitosis, leading to cell proliferation and inhibition of apoptosis
+
+<br>
+<br>
+<br>
+
+#### How about the two main insulin signaling pathways? PI3K/AKT & MAPK/ERK
+
+```{r echo=F, fig.width=10, fig.height=7, fig.fullwidth=TRUE}
+kegg = fread("KEGG_comparsion.txt")
+lst <- unlist(lapply(kegg$term_name, grepl, pattern="PI|MAPK|ERK"))
+kegg = kegg[lst,c('term_name','pval_mut','pval_wt')] %>%
+  pivot_longer(cols = c('pval_mut','pval_wt'), values_to = "p_value", names_prefix = "pval_", names_to = "Genotype")
+
+#tiff("./RNAplots/", units="in", width=10, height=8, res=300)
+ggplot(data=kegg,
+       aes(x =term_name,y = -log(p_value)))+
+       geom_point(aes(col=Genotype),size = 6, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+        geom_hline(yintercept =-log(0.01), linetype=2)+
+        #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+        #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+        coord_flip() + 
+        xlab('')+ ylab("-log(P-value)")+
+        ggtitle("KEGG pathways insulin signaling pathways")+
+        theme_light()
+
+reac = fread("REAC_comparsion.txt")
+lst <- unlist(lapply(reac$term_name, grepl, pattern="PI|MAPK|ERK"))
+reac = reac[lst,c('term_name','pval_mut','pval_wt')] %>%
+  pivot_longer(cols = c('pval_mut','pval_wt'), values_to = "p_value", names_prefix = "pval_", names_to = "Genotype")
+
+#tiff("./RNAplots/", units="in", width=10, height=8, res=300)
+ggplot(data=reac,
+       aes(x =term_name,y = -log(p_value)))+
+       geom_point(aes(col=Genotype),size = 6, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+        geom_hline(yintercept =-log(0.01), linetype=2)+
+        #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+        #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+        coord_flip() + 
+        xlab('')+ ylab("-log(P-value)")+
+        ggtitle("REACTOME insulin signaling pathways")+
+        theme_light()
+
+```
+<br>
+<br>
+<br>
+
+### GO biological pathways functional enrichment
+#### Overlapping Gene ontology terms were visualised and grouped using cytoscape.
+
+```{r echo=F}
+cyto_res = fread("AutoAnnotate - Summary Network default node.csv") %>%
+  filter(`cluster node count` > 2)
+datatable(cyto_res[,c(1,19,6,7,11,12,14)], caption = "Cytoscape GOBP clusters")
+```
+Gene ontology (GO) analysis of the differentially expressed genes (Supplementary Data?) indicate highest enrichment in pathways relating to intracellular signaling, cell proliferation, vasculature, cellular, and structural development (figure 1).  These pathways appear to be down stream of glucose uptake and insulin signaling within the muscle. Terms relating to insulin signaling were also significantly enriched, namely, response to peptide hormone (including insulin), regulation of protein phosphorylation and MAPK & ERK signaling pathways. The lower enrichment of insulin signaling related genes and pathways and the higher enrichment of other genes and pathways, most notably those involved in cytokine signaling which are an important negative feedback mechanism, suggests that the tissue is in the process of switching off signaling insulin signaling. This could be due to the timing of the muscle biopsies in relation to euglycaemic clamp stimulation suggesting that the biopsies were taken at the tail end of gene expression relating to insulin signaling and instead the tissue is shifting towards inhibition of insulin signaling.
+
+```{r echo=F,include=F}
+###### GO bubble plots ###########
+gem = fread("gProfiler_sigWT.txt", fill=T)
+gem_mut = fread("gProfiler_sigMUT.txt", fill=T)
+
+cyto_res$term_id = lapply(1:nrow(cyto_res), function(x) unlist(str_split(cyto_res$`EnrichmentMap::Name`[x],",")) )
+cyto_res$wt_term_overlap = lapply(1:nrow(cyto_res), function(x) sum(gem$term_id %in% unlist(cyto_res$term_id[x])) )
+cyto_res$mut_term_overlap = lapply(1:nrow(cyto_res), function(x) sum(gem_mut$term_id %in% unlist(cyto_res$term_id[x])) )
+cyto_res$wt_per_over = (as.numeric(cyto_res$wt_term_overlap)/cyto_res$`cluster node count`)*100
+cyto_res$mut_per_over = (as.numeric(cyto_res$mut_term_overlap)/cyto_res$`cluster node count`)*100
+
+plot = cyto_res %>% select(1,6,7,11,19,23,24)
+
+colnames(plot)[c(1,2:3,6:7)] = c("node_count","p_value","p_value", "term_overlap", "term_overlap")
+tmp_p = plot %>% select(1,2,4,5,7) %>% mutate(genotype = "LRP5") %>%
+  arrange(desc(node_count)) %>% mutate(rank = seq(1,nrow(plot)))
+tmp_p$p_value[tmp_p$p_value == "NaN"] = 1
+tmp_p2 = plot %>% select(1,3,4,5,6) %>% mutate(genotype = "Controls") %>%
+  arrange(desc(node_count)) %>% mutate(rank = seq(1,nrow(plot)))
+cyto_res2 = bind_rows(tmp_p,tmp_p2) %>% mutate(p_value = as.numeric(p_value),
+                                               term_overlap = as.numeric(term_overlap)) %>%
+  arrange(p_value)
+
+cyto_res2$name = factor(cyto_res2$name, levels = tmp_p2$name[order(tmp_p2$p_value, decreasing = F)])
+
+cyto_res2 = cyto_res2 %>% arrange(name)
+
+cyto_res2[1:20,'name'] = rep(c("vasculature development","immune response","anatomical structure devlopment","cell population proliferation"
+    ,"response to chemical stimulus","intracellular signal transduction","cytokine mediated signaling",
+    "regulation vasculature angiogenesis","multicellular organismal development","growth factor stimulus"),
+    1, each=2)
+
+```
+
+
+```{r echo=F, fig.width=14, fig.height=7, fig.fullwidth=TRUE}
+cyto_res2[1:20] %>%
+  ggplot(aes(x=-log(p_value), y=name, size = term_overlap, col = genotype)) +
+  geom_point(alpha=0.9) +
+  scale_size(range = c(5, 18)) +
+  geom_vline(xintercept = 3, linetype="dotted", 
+             color = "blue", size=1) +
+  labs(x="-log(pvalue)", y="Gene enrichment cluster name", size="Number of overlapping GO terms")+
+  theme_light()
+```
+<br>
+<br>
+<br>
+
+### Comparsions of pathways relating to insulin signaling
+
+```{r echo=F, fig.width=14, fig.height=7, fig.fullwidth=TRUE}
+cyto_res2[name %in% c("peptide hormone response",
+                     "protein phosphorylation transferase",
+                     "erk2 cascade mapk",
+                     "cytokine production gene",
+                     "signaling pathway stat",
+                     "cytokine mediated signaling"), 'name'] = rep(c("cytokine mediated signaling",
+                                                                     "cytokine gene production",
+                                                                     "MAPK & ERK cascade",
+                                                                     'regulation of protein phosphorylations',
+                                                                     "peptide hormone response",
+                                                                     "JAK-STAT signaling"),1,each=2)
+
+cyto_res2 %>% filter(name %in% c("cytokine mediated signaling",
+                                 "cytokine gene production",
+                                 "MAPK & ERK cascade",
+                                 'regulation of protein phosphorylations',
+                                 "peptide hormone response",
+                                 "JAK-STAT signaling")) %>%
+  ggplot(aes(x=-log(p_value), y=name, size = term_overlap, col = genotype)) +
+  geom_point(alpha=0.9) +
+  scale_size(range = c(5, 18)) +
+  geom_vline(xintercept = 3, linetype="dotted", 
+             color = "blue", size=1) +
+  labs(x="-log(pvalue)", y="Gene enrichment cluster name", size="Number of overlapping GO terms")+
+  theme_light()
+```
+#### Genes enriched for peptide hormone response
+
+```{r echo=F, fig.width=10, fig.height=12, fig.fullwidth=TRUE}
+MAPK = unlist(str_split(cyto_res$`EnrichmentMap::Name`[cyto_res$name == "peptide hormone response"], ","))
+# Other pathways = protein phosphorylation transferase, signaling pathway stat
+goen = gem[gem$GO.ID %in% MAPK,]
+gene_MAPK = unique(unlist(strsplit(goen$Genes, split = ",")))
+
+tmp1 <- RNA[RNA$Symbol %in% gene_MAPK, ] %>%
+  select(Symbol, logFC = logFC_wt_InsVsBasal, SE = SE_wt_InsVsBasal) %>% mutate(Genotype = "Control")
+tmp2 = RNA[RNA$Symbol %in% gene_MAPK, ] %>%
+  select(Symbol, logFC = logFC_mut_InsVsBasal, SE = SE_mut_InsVsBasal) %>% mutate( Genotype = "LRP5")
+tmp3 = bind_rows(tmp1,tmp2) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE)) %>%
+  filter(logFC > 0)
+lv = tmp3 %>% filter(Genotype=="Control") %>% arrange(logFC) %>% select(Symbol)
+tmp3$Symbol<-factor(tmp3$Symbol, levels=lv$Symbol)
+
+#tiff("./RNAplots/Gene_ERK_forestplot.tiff", units="in", width=10, height=8, res=300)
+ggplot(data=tmp3,
+           aes(x =Symbol,y = logFC, ymin = lo_ci, ymax = up_ci))+
+  #geom_pointrange(aes(col=Genotype), position=position_dodge(1))+ #aes(col='red')
+  geom_point(aes(col=Genotype),size = 3, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Genes in GO peptide hormone response (up regulated)")+
+  theme_light()
+
+tmp3 = bind_rows(tmp1,tmp2) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE)) %>%
+  filter(logFC <= 0, is.na(Symbol) ==F)
+lv = tmp3 %>% filter(Genotype=="Control") %>% arrange(logFC) %>% select(Symbol)
+tmp3$Symbol<-factor(tmp3$Symbol, levels=lv$Symbol)
+
+ggplot(data=tmp3[c(-61,-47)],
+           aes(x =Symbol,y = logFC, ymin = lo_ci, ymax = up_ci))+
+  #geom_pointrange(aes(col=Genotype), position=position_dodge(1))+ #aes(col='red')
+  geom_point(aes(col=Genotype),size = 3, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Genes in GO peptide hormone response (down regulated)")+
+  theme_light()
+```
+#### Genes enriched for protein phosphorylation pathways
+
+```{r echo=F, fig.width=10, fig.height=12, fig.fullwidth=TRUE}
+gem = fread("gProfiler_sigWT.txt", fill=T)
+gem_mut = fread("gProfiler_sigMUT.txt", fill=T)
+
+MAPK = unlist(str_split(cyto_res$`EnrichmentMap::Name`[cyto_res$name == "protein phosphorylation transferase"], ","))
+# Other pathways = protein phosphorylation transferase, signaling pathway stat
+goen = gem[gem$GO.ID %in% MAPK,]
+gene_MAPK = unique(unlist(strsplit(goen$Genes, split = ",")))
+
+tmp1 <- RNA[RNA$Symbol %in% gene_MAPK, ] %>%
+  select(Symbol, logFC = logFC_wt_InsVsBasal, SE = SE_wt_InsVsBasal) %>% mutate(Genotype = "Control")
+tmp2 = RNA[RNA$Symbol %in% gene_MAPK, ] %>%
+  select(Symbol, logFC = logFC_mut_InsVsBasal, SE = SE_mut_InsVsBasal) %>% mutate( Genotype = "LRP5")
+tmp3 = bind_rows(tmp1,tmp2) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE)) %>%
+  filter(logFC > 0)
+lv = tmp3 %>% filter(Genotype=="Control") %>% arrange(logFC) %>% select(Symbol)
+tmp3$Symbol<-factor(tmp3$Symbol, levels=lv$Symbol)
+
+#tiff("./RNAplots/Gene_ERK_forestplot.tiff", units="in", width=10, height=8, res=300)
+ggplot(data=tmp3,
+           aes(x =Symbol,y = logFC, ymin = lo_ci, ymax = up_ci))+
+  #geom_pointrange(aes(col=Genotype), position=position_dodge(1))+ #aes(col='red')
+  geom_point(aes(col=Genotype),size = 3, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Genes in GO protein phosphorylation transferase (up regulated)")+
+  theme_light()
+
+tmp3 = bind_rows(tmp1,tmp2) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE)) %>%
+  filter(logFC <= 0, is.na(Symbol) ==F)
+lv = tmp3 %>% filter(Genotype=="Control") %>% arrange(logFC) %>% select(Symbol)
+tmp3$Symbol<-factor(tmp3$Symbol, levels=lv$Symbol)
+
+ggplot(data=tmp3[c(-36),],
+           aes(x =Symbol,y = logFC, ymin = lo_ci, ymax = up_ci))+
+  #geom_pointrange(aes(col=Genotype), position=position_dodge(1))+ #aes(col='red')
+  geom_point(aes(col=Genotype),size = 3, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Genes in GO protein phosphorylation transferase (down regulated)")+
+  theme_light()
+```
+#### Genes enriched for JAK-STAT signalling
+
+```{r echo=F, fig.width=10, fig.height=8, fig.fullwidth=TRUE}
+gem = fread("gProfiler_sigWT.txt", fill=T)
+gem_mut = fread("gProfiler_sigMUT.txt", fill=T)
+
+MAPK = unlist(str_split(cyto_res$`EnrichmentMap::Name`[cyto_res$name == "signaling pathway stat"], ","))
+# Other pathways = protein phosphorylation transferase, signaling pathway stat
+goen = gem[gem$GO.ID %in% MAPK,]
+gene_MAPK = unique(unlist(strsplit(goen$Genes, split = ",")))
+
+tmp1 <- RNA[RNA$Symbol %in% gene_MAPK, ] %>%
+  select(Symbol, logFC = logFC_wt_InsVsBasal, SE = SE_wt_InsVsBasal) %>% mutate(Genotype = "Control")
+tmp2 = RNA[RNA$Symbol %in% gene_MAPK, ] %>%
+  select(Symbol, logFC = logFC_mut_InsVsBasal, SE = SE_mut_InsVsBasal) %>% mutate( Genotype = "LRP5")
+tmp3 = bind_rows(tmp1,tmp2) %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE))
+lv = tmp3 %>% filter(Genotype=="Control") %>% arrange(logFC) %>% select(Symbol)
+tmp3$Symbol<-factor(tmp3$Symbol, levels=lv$Symbol)
+
+#tiff("./RNAplots/Gene_ERK_forestplot.tiff", units="in", width=10, height=8, res=300)
+ggplot(data=tmp3,
+           aes(x =Symbol,y = logFC, ymin = lo_ci, ymax = up_ci))+
+  #geom_pointrange(aes(col=Genotype), position=position_dodge(1))+ #aes(col='red')
+  geom_point(aes(col=Genotype),size = 3, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change (SE)")+
+  ggtitle("Genes in GO JAK-STAT signalling (up regulated)")+
+  theme_light()
+
+```
+
+## Muscle miRNA results
+
+Bulk miRNA sequencing was performed on muscle biopsies of 12 controls and 10 individuals with LRP5 mutations. In total the expression of 358 miRNAs was measured. In contrast to gene expression we observe eight miRNAs were differentially expressed (P < 0.01) between cases and controls at basal state. Six of these same miRNA are significantly inversely differentially expressed in post euglycaemic clamp muscle tissue, indicating that these same miRNAs were degraded after glucose and insulin stimulation.
+
+Contrastingly we see a large difference in miRNA expression is between wt and mut in the basal state, with 13 miRNAs (adjusted P < 0.05). These same miRNA show converse logFC in the mut basal vs insulin, indicating that these same mircoRNAs were used during insulin stimulation.
+
+
+<br>
+<br>
+<br>
+
+
+```{r echo=F, include=F, warning=F}
+colData_miRNA <- read.delim("colData_miRNA_Muscle.txt", h=T)
+colData_miRNA <- colData_miRNA[,2:4]
+rownames(colData_miRNA) <- colData_miRNA$Samples
+colData_miRNA$Group <- c(rep('LRP5wt_basal',11),rep('LRP5wt_Ins',12),rep('LRP5mut_basal',9),rep('LRP5mut_Ins',10))
+colData_miRNA$Donor <- c('LRP026_wt','LRP028_wt','LRP023_wt','LRP017_wt','LRP020_wt','LRP012_wt','LRP019_wt','LRP021_wt','LRP016_wt','LRP024_wt','LRP022_wt','LRP026_wt','LRP028_wt','LRP023_wt','LRP017_wt','LRP020_wt','LRP012_wt','LRP019_wt','LRP021_wt','LRP016_wt','LRP024_wt','LRP022_wt','LRP027_wt','LRP002_mut','LRP015_mut','LRP009_mut','LRP013_mut','LRP004_mut','LRP014_mut','LRP006_mut','LRP001_mut','LRP010_mut','LRP002_mut','LRP015_mut','LRP009_mut','LRP013_mut','LRP003_mut','LRP007_mut','LRP004_mut','LRP014_mut','LRP006_mut','LRP001_mut')
+colData_miRNA$Sample <- factor(colData_miRNA$Sample, levels=colData_miRNA$Sample)
+colData_miRNA$ID = str_split_fixed(colData_miRNA$Donor, "_", 2)[,1]
+Clinical_Data <- read.delim("Clinical_Data.txt",h=T)
+Clinical_Data = Clinical_Data[!Clinical_Data$Donor %in% c("LRP002_mut"),]
+colData_miRNA <- merge(colData_miRNA, Clinical_Data, by="Donor")
+colData_miRNA <- colData_miRNA[order(colData_miRNA$Sample),]
+```
+
+
+```{r echo=F, fig.width=14, fig.height=7, fig.fullwidth=TRUE}
+miRNA = as.data.frame(fread("miRNA_res.txt"))
+BAS_miRNA = miRNA[miRNA$padj_basal_mut_vs_wt < 0.01,]
+degraded_miRNA = miRNA[miRNA$padj_basal_mut_vs_wt < 0.05 & miRNA$padj_mut_InsVsBasal < 0.10,] %>% 
+  arrange(logFC_basal_mut_vs_wt)
+
+## Forest plot ###
+tmp1 <- miRNA[miRNA$miRNA %in% BAS_miRNA$miRNA, ] %>%
+  select(miRNA, logFC = logFC_basal_mut_vs_wt, SE = SE_basal_mut_vs_wt)
+tmp3 = tmp1 %>% mutate(lo_ci = logFC-(SE), up_ci =logFC+(SE))
+lv = tmp3 %>% arrange(logFC) %>% select(miRNA)
+tmp3$miRNA<-factor(tmp3$miRNA, levels=lv$miRNA)
+
+tmp3 %>% arrange(logFC) %>% ggplot(aes(x =miRNA,y = logFC))+
+  geom_point(col="#F8766D",size = 4, position=position_dodge(1)) + # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("Log fold change")+
+  ggtitle("All significantly differentially expressed miRNAs")+
+  theme_light()
+
+datatable(BAS_miRNA[, c('miRNA', 'padj_basal_mut_vs_wt', "logFC_basal_mut_vs_wt", "padj_mut_InsVsBasal","logFC_mut_InsVsBasal")], caption = "All significant genes")
+```
+<br>
+<br>
+<br>
+
+### Degraded miRNAs
+
+```{r echo=FALSE, fig.cap="A caption", out.width = '100%'}
+knitr::include_graphics("miRNA_counts.png")
+```
+
+
+<br>
+<br>
+<br>
+
+## Association between M-value and differentially expressed miRNAs
+
+Of these 8 differentially expressed miRNA how many are associated to M-values in the patients?
+
+A linear model was used to test the association of normalised miRNA expression and M-values.
+
+```{r echo=F, fig.width=14, fig.height=7, fig.fullwidth=TRUE}
+#### Normalised counts versus Mvalues ####
+rownames(miRNA) = miRNA$miRNA
+mir_counts = as.data.frame(t(miRNA[,c(1:41)]))[2:41,] %>%
+  rownames_to_column("Sample") %>% mutate(Sample = gsub("rld_" , "", Sample)) %>%
+  left_join(colData_miRNA, "Sample") %>%
+  mutate_at(2:359, as.numeric)
+mir_counts = mir_counts[grep("basal", mir_counts$Sample),]
+
+summary(glm(mir_counts[,"M_value"]~mir_counts[,"hsa-miR-224-5p"] + Age + Sex, data = mir_counts, family = "gaussian"))
+
+## Only sig
+my_lms <- lapply(BAS_miRNA$miRNA, function(x) glm(log(mir_counts[,"M_value"])~mir_counts[,x] + Age + Sex, data = mir_counts, family = "gaussian"))
+summaries <- lapply(my_lms, summary)
+# extract beta coefficients
+sapply(my_lms, coef)
+# extract p values
+pval_df = as.data.frame(t(as.data.frame(lapply(1:8, function(x) summaries[[x]]$coefficients[2,c(1,2,4)]))))
+rownames(pval_df) = colnames(mir_counts[BAS_miRNA$miRNA])
+# Calcualte confidence intervals
+ci = unlist(lapply(my_lms, function(x) unlist(confint(x, "mir_counts[, x]",level=1-(0.05/8)))))
+
+pval_df$FDR = p.adjust(pval_df$`Pr(>|t|)`, method='bonferroni')
+pval_df$miRNA = rownames(pval_df)
+pval_df$miRNA <- factor(pval_df$miRNA, levels=rev(pval_df$miRNA[order(pval_df$FDR)]))
+pval_df$lo_ci = ci[seq(1,length(ci), 2)]
+pval_df$up_ci = ci[seq(2,length(ci), 2)]
+
+### Stratify by genotype ###
+# mir_counts2 = mir_counts[grep("_wt_", mir_counts$Sample),]
+# 
+# summary(glm(mir_counts2[,"M_value"]~mir_counts2[,"hsa-miR-224-5p"] + Age + Sex, data = mir_counts2, family = "gaussian"))
+
+fin = pval_df %>% arrange(miRNA) %>% ggplot(aes(x =miRNA,y = Estimate,show.legend = FALSE))+
+  geom_point(size = 4, position=position_dodge(1))+
+  geom_errorbar(aes(ymin=lo_ci, ymax=up_ci),width=0.3,cex=1)+ 
+  # specifies the size and shape of the geompoint
+  geom_hline(yintercept =0, linetype=2)+
+  #eom_errorbar(aes(ymin=lo_ci, ymax=up_ci, col=Genotype),width=0.3,cex=1, height = 0.15)+ 
+  #facet_wrap(~Symbol,strip.position="left",nrow=9,scales = "free_y") +
+  coord_flip() + 
+  xlab('')+ ylab("-log(p-value)")+
+  ggtitle("Association between miRNA and M-values")+
+  theme_light() 
+fin + theme(legend.position="none")
+
+```
+
+
+<br>
+<br>
+<br>
+
+### Enrichment of miRNA target genes within differentially expressed genes
+
+We then mapped these miRNA to gene targets and tested for enrichment within our differentially expressed genes, we found significant evidence of enrichment.
+
+Gene targets of these miRNA are significantly enriched for differentially expressed genes identified.
+
+
+```{r echo=F, warning=F, include=F}
+library(readxl)
+library(tidytable)
+test = fread("/Users/sg/Downloads/TargetScan7.2__miR-1287-5p.predicted_targets.txt", sep = "\t") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`)) %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`)) %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+  #filter(`Cumulative weighted context++ score` < -0.1)
+test2 = fread("/Users/sg/Downloads/TargetScan7.2__miR-15-5p_16-5p_195-5p_424-5p_497-5p.predicted_targets.txt", sep = "\t") %>%
+  filter.(`Representative miRNA` == "hsa-miR-497-5p") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`))  %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`))  %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+test3 = fread("/Users/sg/Downloads/TargetScan7.2__miR-193a-5p.predicted_targets.txt", sep = "\t") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`))  %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`))  %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+test4 = fread("/Users/sg/Downloads/TargetScan7.2__miR-199-5p.predicted_targets.txt", sep = "\t") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`))  %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`))  %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+test5 = fread("/Users/sg/Downloads/TargetScan7.2__miR-224-5p.predicted_targets.txt", sep = "\t") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`))  %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`))  %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+test6 = fread("/Users/sg/Downloads/TargetScan7.2__miR-28-5p_708-5p.predicted_targets.txt", sep = "\t") %>%
+  filter.(`Representative miRNA` == "hsa-miR-708-5p") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`)) %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`))  %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+test7 = fread("/Users/sg/Downloads/TargetScan7.2__miR-135-5p.predicted_targets.txt")
+test8 = fread("/Users/sg/Downloads/TargetScan7.2__miR-452-5p_892-3p.predicted_targets.txt") %>%
+  filter.(`Representative miRNA` == "hsa-miR-452-5p") %>%
+  mutate(`Cumulative weighted context++ score` = as.numeric(`Cumulative weighted context++ score`))  %>%
+  mutate(`Total context++ score` = as.numeric(`Total context++ score`))  %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+test9 = fread("/Users/sg/Downloads/TargetScan7.2__miR-214-5p.predicted_targets.txt") %>% 
+  select(`Target gene`, `Representative miRNA`, `Cumulative weighted context++ score`)
+
+all_tar = bind_rows(test,test2, test3,test4, test5, test6, test8, test9)
+colnames(all_tar) = c("target", "miRNA", "Cum_weight_context_score")
+all_tar2 = all_tar %>% distinct(target, .keep_all=T) %>% filter(Cum_weight_context_score < -0.03, miRNA %in% BAS_miRNA$miRNA)
+
+```
+
+```{r echo=F}
+cat(nrow(all_tar2), "miRNA targets identified via seed pairing of 7 upregulated miRNAs")
+
+backgrd = fread("background_genes.txt")
+### Check enrichment of targets compared to 
+rand_avg = c()
+
+for (i in c(1:1000)){
+  set.seed(i)
+  # Take random sample of background genes
+  rand = backgrd$Symbol[sample(length(backgrd$Symbol), size = nrow(all_sig))]
+  # See how many overlap with miRNA targets
+  s = sum(all_tar2$target %in% rand)
+  rand_avg = c(rand_avg, s)
+}
+
+print("Results of enrichment test of miRNA targets between differentially expressed genes and randomly selected genes")
+
+prop.test(c(sum(all_tar2$target %in% all_sig$Symbol), mean(rand_avg)), c(1856, 1856))
+
+print("Results of enrichment test of miRNA targets between control and LRP5")
+
+prop.test(c(sum(all_tar2$target %in% sigWT$Symbol), sum(all_tar2$target %in% sigMUT$Symbol)), c(1651, 917), alternative = "less")
+
+```
+
+We observed enrichment of targets to genes but are these genes being silenced as we would expected?
+
+Lets compare the logFC of the targets versus non-targets for both wild and mutant
+
+```{r}
+boxplot(sigWT$logFC_wt_InsVsBasal[sigWT$Symbol %in% all_tar2$target],
+        sigWT$logFC_wt_InsVsBasal[!sigWT$Symbol %in% all_tar2$target],
+        sigMUT$logFC_mut_InsVsBasal[sigMUT$Symbol %in% all_tar2$target],
+        sigMUT$logFC_mut_InsVsBasal[!sigMUT$Symbol %in% all_tar2$target],outline=F,
+        names = c("miRNA targets \n WT", "non-targets \n WT", "miRNA targets \n MUT", "non-targets \n MUT"),
+        title = "Comparsion of miRNA targets/non-targets LogFC")
+text(x= 1.5, y= 1.5, labels= "0.02")
+text(x= 3.5, y= 1.5, labels= "0.02")
+
+```
+
+
+
+<br>
+<br>
+<br>
+
+#### miRNA conclusions
+ - We observe 8 differentially expressed miRNAs at basal level in LRP5 mutants
+ - These miRNAs are then degraded after euglycaemic clamp indicating a role in silecning genes
+ - We tested the association of these miRNAs to M-values and observe the miRNA (hsa-miR-224-5p) with the largest logFC also has the strongest inverse association to M-value. All other miRNAs although non-significant follow the expected direction based on expression
+ - Lastly, we tested if targets of these miRNA are enriched in our differentially expressed genes. We observe strong enrichment overall and suggestive enrichment for LRP5 differentially genes over wild type (p=0.09)
+
