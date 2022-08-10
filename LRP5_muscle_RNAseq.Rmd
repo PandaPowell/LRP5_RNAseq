@@ -21,7 +21,6 @@ knitr::opts_chunk$set(echo = TRUE)
 Differential gene expression analysis was conducted using a multilevel or repeated measures design. The repeated design refers to the fact that multiple measures were performed in the same individuals, so we have a paired comparison experiment for each genotype group allowing us to compare the effect of treatment, in this case euglycaemic clamp, between the same individuals. However, additionally we would like to compare the effect of treatment between genotype groups. This was perform using DEseq2 a model matrix was constructed using the following formula: ~Genotype + Genotype:individual number + Genotype:Stimulation. Comparsions between groups were performed at basal level using controlling for age + sex + BMI. Functional enrichment of genes was performed using gprofiler. Genes were ranked based on the absolute LogFC and submitted as an ordered query giving more weight to those genes with higher absolute logFC. LogFC changes we shrunk using the apeglm package.
 
 ```{r echo=FALSE, warning=FALSE, include=FALSE}
-setwd("/Users/sg/Library/Mobile Documents/com~apple~CloudDocs/Secondment/LRP5_data/LRP5_markdown/")
 library(plotrix)
 library(gplots)
 library(RColorBrewer)
